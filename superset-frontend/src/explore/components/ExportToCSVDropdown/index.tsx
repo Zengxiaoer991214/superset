@@ -26,12 +26,17 @@ import { Dropdown } from '@superset-ui/core/components';
 enum MenuKeys {
   ExportOriginal = 'export_original',
   ExportPivoted = 'export_pivoted',
+  ExportOriginalMinio = 'export_original_minio',
+  ExportPivotedMinio = 'export_pivoted_minio',
 }
 
 interface ExportToCSVButtonProps {
   exportCSVOriginal: () => void;
   exportCSVPivoted: () => void;
+  exportCSVOriginalMinio?: () => void;
+  exportCSVPivotedMinio?: () => void;
   children: ReactChild;
+  minioEnabled?: boolean;
 }
 
 const MenuItemContent = styled.div`
@@ -48,7 +53,10 @@ const MenuItemContent = styled.div`
 export const ExportToCSVDropdown = ({
   exportCSVOriginal,
   exportCSVPivoted,
+  exportCSVOriginalMinio,
+  exportCSVPivotedMinio,
   children,
+  minioEnabled = false,
 }: ExportToCSVButtonProps) => {
   const handleMenuClick = useCallback(
     ({ key }: { key: Key }) => {
@@ -59,12 +67,70 @@ export const ExportToCSVDropdown = ({
         case MenuKeys.ExportPivoted:
           exportCSVPivoted();
           break;
+        case MenuKeys.ExportOriginalMinio:
+          exportCSVOriginalMinio?.();
+          break;
+        case MenuKeys.ExportPivotedMinio:
+          exportCSVPivotedMinio?.();
+          break;
         default:
           break;
       }
     },
-    [exportCSVPivoted, exportCSVOriginal],
+    [
+      exportCSVPivoted,
+      exportCSVOriginal,
+      exportCSVOriginalMinio,
+      exportCSVPivotedMinio,
+    ],
   );
+
+  const menuItems = [
+    {
+      key: MenuKeys.ExportOriginal,
+      label: (
+        <MenuItemContent>
+          {t('Original')}
+          <Icons.DownloadOutlined />
+        </MenuItemContent>
+      ),
+    },
+    {
+      key: MenuKeys.ExportPivoted,
+      label: (
+        <MenuItemContent>
+          {t('Pivoted')}
+          <Icons.DownloadOutlined />
+        </MenuItemContent>
+      ),
+    },
+  ];
+
+  if (minioEnabled) {
+    menuItems.push(
+      {
+        type: 'divider' as const,
+      },
+      {
+        key: MenuKeys.ExportOriginalMinio,
+        label: (
+          <MenuItemContent>
+            {t('Original (to MinIO)')}
+            <Icons.CloudUploadOutlined />
+          </MenuItemContent>
+        ),
+      },
+      {
+        key: MenuKeys.ExportPivotedMinio,
+        label: (
+          <MenuItemContent>
+            {t('Pivoted (to MinIO)')}
+            <Icons.CloudUploadOutlined />
+          </MenuItemContent>
+        ),
+      },
+    );
+  }
 
   return (
     <Dropdown
@@ -72,26 +138,7 @@ export const ExportToCSVDropdown = ({
       menu={{
         onClick: handleMenuClick,
         selectable: false,
-        items: [
-          {
-            key: MenuKeys.ExportOriginal,
-            label: (
-              <MenuItemContent>
-                {t('Original')}
-                <Icons.DownloadOutlined />
-              </MenuItemContent>
-            ),
-          },
-          {
-            key: MenuKeys.ExportPivoted,
-            label: (
-              <MenuItemContent>
-                {t('Pivoted')}
-                <Icons.DownloadOutlined />
-              </MenuItemContent>
-            ),
-          },
-        ],
+        items: menuItems,
       }}
     >
       {children}

@@ -30,6 +30,7 @@ from superset import is_feature_enabled
 from superset.commands.sql_lab.estimate import QueryEstimationCommand
 from superset.commands.sql_lab.execute import CommandResult, ExecuteSqlCommand
 from superset.commands.sql_lab.export import SqlResultExportCommand
+from superset.commands.sql_lab.minio_export_command import MinIOSqlLabExportCommand
 from superset.commands.sql_lab.results import SqlExecutionResultsCommand
 from superset.commands.sql_lab.streaming_export_command import (
     StreamingSqlResultExportCommand,
@@ -67,6 +68,7 @@ from superset.sqllab.utils import bootstrap_sqllab_data
 from superset.sqllab.validators import CanAccessQueryValidatorImpl
 from superset.superset_typing import FlaskResponse
 from superset.utils import core as utils, json
+from superset.utils.minio_storage import is_minio_export_enabled
 from superset.views.base import CsvResponse, generate_download_headers, json_success
 from superset.views.base_api import BaseSupersetApi, requires_json, statsd_metrics
 
@@ -437,6 +439,99 @@ class SqlLabRestApi(BaseSupersetApi):
         )
 
         return response
+
+    @expose("/export_minio/", methods=("POST",))
+    @protect()
+    @statsd_metrics
+    @event_logger.log_this_with_context(
+        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}.export_minio",
+        log_to_statsd=False,
+    )
+    def export_minio(self) -> FlaskResponse:
+        """Export the SQL query results to MinIO storage.
+        ---
+        post:
+          summary: Export the SQL query results to MinIO
+          description: >-
+            Exports large SQL query results to MinIO object storage,
+            automatically splitting into multiple files if needed
+          requestBody:
+            required: true
+            content:
+              application/x-www-form-urlencoded:
+                schema:
+                  type: object
+                  properties:
+                    client_id:
+                      type: string
+                      description: The SQL Lab query client ID
+                    filename:
+                      type: string
+                      description: Desired filename for the export
+          responses:
+            200:
+              description: Export successful, returns MinIO object info and download URL
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      object_name:
+                        type: string
+                        description: MinIO object name
+                      download_url:
+                        type: string
+                        description: Presigned URL for download
+                      total_rows:
+                        type: integer
+                        description: Total rows exported
+                      file_count:
+                        type: integer
+                        description: Number of files created
+                      filename:
+                        type: string
+                        description: Final filename
+            400:
+              description: Bad request
+            403:
+              description: Access denied
+            404:
+              description: Query not found
+            500:
+              description: Server error
+        """
+        if not is_minio_export_enabled():
+            return self.response_400(message="MinIO export is not enabled")
+
+        client_id = request.form.get("client_id")
+        filename = request.form.get("filename")
+
+        if not client_id:
+            return self.response_400(message="client_id is required")
+
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = secure_filename(f"sqllab_{client_id}_{timestamp}.csv")
+
+        try:
+            # Execute MinIO export command
+            chunk_size = 1024
+            command = MinIOSqlLabExportCommand(client_id, filename, chunk_size)
+            command.validate()
+
+            result = command.run()
+
+            logger.info(
+                "SQL Lab MinIO export completed: client_id=%s, object=%s",
+                client_id,
+                result["object_name"],
+            )
+
+            return self.response(200, **result)
+
+        except Exception as ex:
+            logger.error("MinIO export failed: %s", ex)
+            return self.response_500(message=str(ex))
 
     @expose("/results/")
     @protect()

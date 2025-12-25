@@ -37,6 +37,7 @@ from superset.commands.chart.data.create_async_job_command import (
     CreateAsyncChartDataJobCommand,
 )
 from superset.commands.chart.data.get_data_command import ChartDataCommand
+from superset.commands.chart.data.minio_export_command import MinIOChartExportCommand
 from superset.commands.chart.data.streaming_export_command import (
     StreamingCSVExportCommand,
 )
@@ -57,6 +58,7 @@ from superset.utils.core import (
     get_user_id,
 )
 from superset.utils.decorators import logs_context
+from superset.utils.minio_storage import is_minio_export_enabled
 from superset.views.base import CsvResponse, generate_download_headers, XlsxResponse
 from superset.views.base_api import statsd_metrics
 
@@ -642,3 +644,106 @@ class ChartDataRestApi(ChartRestApi):
         response.implicit_sequence_conversion = False
 
         return response
+
+    @expose("/<int:pk>/data_minio/", methods=("POST",))
+    @protect()
+    @statsd_metrics
+    @event_logger.log_this_with_context(
+        action=lambda self, *args, **kwargs: f"{self.__class__.__name__}.data_minio",
+        log_to_statsd=False,
+    )
+    def data_minio(self, pk: int) -> Response:
+        """
+        Export chart data to MinIO storage.
+        ---
+        post:
+          summary: Export chart data to MinIO
+          description: >-
+            Exports chart data to MinIO object storage,
+            automatically splitting into multiple files if needed
+          parameters:
+          - in: path
+            schema:
+              type: integer
+            name: pk
+            description: The chart ID
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ChartDataQueryContextSchema'
+          responses:
+            200:
+              description: Export successful, returns MinIO object info and download URL
+              content:
+                application/json:
+                  schema:
+                    type: object
+                    properties:
+                      object_name:
+                        type: string
+                        description: MinIO object name
+                      download_url:
+                        type: string
+                        description: Presigned URL for download
+                      total_rows:
+                        type: integer
+                        description: Total rows exported
+                      file_count:
+                        type: integer
+                        description: Number of files created
+                      filename:
+                        type: string
+                        description: Final filename
+            400:
+              description: Bad request
+            401:
+              description: Unauthorized
+            500:
+              description: Server error
+        """
+        if not is_minio_export_enabled():
+            return self.response_400(message="MinIO export is not enabled")
+
+        try:
+            json_body = request.json
+            if not json_body:
+                return self.response_400(message="Request body is required")
+
+            # Parse and validate query context
+            query_context = self._create_query_context_from_form(json_body)
+            query_context.raise_for_access()
+
+            # Generate filename
+            form_data = json_body.get("form_data", {})
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            chart_name = "export"
+
+            if form_data.get("slice_name"):
+                chart_name = form_data["slice_name"]
+            elif form_data.get("viz_type"):
+                chart_name = form_data["viz_type"]
+
+            filename = secure_filename(f"superset_{chart_name}_{timestamp}.csv")
+
+            # Execute MinIO export command
+            chunk_size = 1024
+            command = MinIOChartExportCommand(query_context, filename, chunk_size)
+            command.validate()
+
+            result = command.run()
+
+            logger.info(
+                "Chart MinIO export completed: chart_id=%s, object=%s",
+                pk,
+                result["object_name"],
+            )
+
+            return self.response(200, **result)
+
+        except ValidationError as error:
+            return self.response_400(message=error.messages)
+        except Exception as ex:
+            logger.error("MinIO export failed: %s", ex)
+            return self.response_500(message=str(ex))
