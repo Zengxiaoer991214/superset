@@ -24,6 +24,32 @@ assists people when migrating to a new version.
 
 ## Next
 
+### MinIO CSV Export Feature
+
+A new optional feature has been added to export CSV data to MinIO object storage:
+
+- **Configuration**: Add `MINIO_EXPORT_CONFIG` to your `superset_config.py` to enable
+- **Dependencies**: Requires `pip install minio` if you want to use this feature
+- **API Endpoints**: New endpoints `/api/v1/sqllab/export_minio/` and `/api/v1/chart/<id>/data_minio/`
+- **Frontend**: New "Export to MinIO" options in CSV export dropdowns when enabled
+- **File Splitting**: Automatically splits large exports into multiple CSV files and creates ZIP archives
+- **Documentation**: See `docs/docs/minio-csv-export.md` for complete setup and usage instructions
+
+This feature is disabled by default. To enable it:
+
+```python
+MINIO_EXPORT_CONFIG = {
+    "enabled": True,
+    "endpoint": "localhost:9000",
+    "access_key": "your_access_key",
+    "secret_key": "your_secret_key",
+    "bucket_name": "superset-exports",
+    # ... other config options
+}
+```
+
+See `docs/docs/minio-csv-export-config-example.py` for complete configuration examples.
+
 ### MCP Service
 
 The MCP (Model Context Protocol) service enables AI assistants and automation tools to interact programmatically with Superset.
