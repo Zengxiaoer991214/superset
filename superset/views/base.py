@@ -122,6 +122,7 @@ FRONTEND_CONF_KEYS = (
     "TABLE_VIZ_MAX_ROW_SERVER",
     "MAPBOX_API_KEY",
     "CSV_STREAMING_ROW_THRESHOLD",
+    "MINIO_EXPORT_ENABLED",
 )
 
 logger = logging.getLogger(__name__)

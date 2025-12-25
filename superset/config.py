@@ -1062,6 +1062,9 @@ MINIO_EXPORT_CONFIG = {
     "file_retention_seconds": 604800,
 }
 
+# Helper config for frontend - exposed via FRONTEND_CONF_KEYS
+MINIO_EXPORT_ENABLED = MINIO_EXPORT_CONFIG.get("enabled", False)
+
 # Excel Options: key/value pairs that will be passed as argument to DataFrame.to_excel
 # method.
 # note: index option should not be overridden
