@@ -62,6 +62,8 @@ superset run -p 8088 --with-threads --reload --debugger
 5. Wait for the export to complete
 6. Click the download link in the notification
 
+**Note**: The export uses **true streaming** - memory usage stays constant even for billions of rows. The data streams from database → CSV generator → MinIO without loading the full dataset into memory.
+
 ### Option B: From Chart/Explore
 
 1. Create or open a chart

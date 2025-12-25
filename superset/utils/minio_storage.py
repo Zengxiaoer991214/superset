@@ -264,6 +264,38 @@ class MinIOStorageManager:
 
         return deleted_count
 
+    def _upload_file_streaming(
+        self,
+        file_buffer: io.BytesIO,
+        object_name: str,
+    ) -> None:
+        """
+        Upload a file buffer to MinIO.
+
+        Args:
+            file_buffer: BytesIO buffer containing file data
+            object_name: Name of the object in MinIO
+        """
+        client = self._initialize_client()
+        bucket_name = self._config.get("bucket_name", "superset-exports")
+
+        file_buffer.seek(0)
+        file_length = file_buffer.getbuffer().nbytes
+
+        client.put_object(
+            bucket_name,
+            object_name,
+            file_buffer,
+            file_length,
+            content_type="text/csv" if object_name.endswith(".csv") else "application/zip",
+        )
+
+        logger.info(
+            "Uploaded to MinIO: %s (%.2f MB)",
+            object_name,
+            file_length / (1024 * 1024),
+        )
+
     def stream_csv_to_minio(
         self,
         csv_generator: Generator[str, None, None],
@@ -272,6 +304,9 @@ class MinIOStorageManager:
     ) -> tuple[str, int, int]:
         """
         Stream CSV data to MinIO, splitting into multiple files if needed.
+        
+        Uses streaming to avoid loading all data into memory. Files are uploaded
+        as they reach the max_rows_per_file threshold.
 
         Args:
             csv_generator: Generator yielding CSV data chunks
@@ -284,12 +319,35 @@ class MinIOStorageManager:
         if max_rows_per_file is None:
             max_rows_per_file = self.get_max_rows_per_file()
 
-        csv_files: list[tuple[str, str]] = []
-        current_file_data: list[str] = []
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        uploaded_files: list[str] = []  # Store object names, not data
+        current_file_buffer = io.BytesIO()
         current_file_rows = 0
         total_rows = 0
         file_index = 1
         header: str | None = None
+
+        def finalize_current_file() -> None:
+            """Upload current file buffer to MinIO and reset."""
+            nonlocal current_file_buffer, current_file_rows, file_index, uploaded_files
+
+            if current_file_buffer.tell() > 0:
+                # Generate object name
+                csv_filename = (
+                    f"{filename.replace('.csv', '')}_{file_index}.csv"
+                    if len(uploaded_files) > 0
+                    else filename
+                )
+                object_name = f"exports/{timestamp}_{csv_filename}"
+
+                # Upload to MinIO
+                self._upload_file_streaming(current_file_buffer, object_name)
+                uploaded_files.append(object_name)
+
+                # Reset for next file
+                current_file_buffer = io.BytesIO()
+                current_file_rows = 0
+                file_index += 1
 
         for chunk in csv_generator:
             # Check for error marker
@@ -298,7 +356,7 @@ class MinIOStorageManager:
 
             lines = chunk.split("\n")
 
-            for i, line in enumerate(lines):
+            for line in lines:
                 # Skip empty lines
                 if not line.strip():
                     continue
@@ -306,50 +364,82 @@ class MinIOStorageManager:
                 # First line is header
                 if header is None:
                     header = line
-                    current_file_data.append(line)
+                    current_file_buffer.write((line + "\n").encode("utf-8"))
                     continue
 
                 # Check if we need to start a new file
                 if current_file_rows >= max_rows_per_file:
-                    # Save current file
-                    csv_filename = (
-                        f"{filename.replace('.csv', '')}_{file_index}.csv"
-                        if len(csv_files) > 0 or current_file_rows >= max_rows_per_file
-                        else filename
-                    )
-                    csv_files.append((csv_filename, "\n".join(current_file_data)))
-
+                    finalize_current_file()
                     # Start new file with header
-                    current_file_data = [header]
-                    current_file_rows = 0
-                    file_index += 1
+                    current_file_buffer.write((header + "\n").encode("utf-8"))
 
-                current_file_data.append(line)
+                current_file_buffer.write((line + "\n").encode("utf-8"))
                 current_file_rows += 1
                 total_rows += 1
 
-        # Save last file
-        if current_file_data and len(current_file_data) > 1:  # More than just header
-            csv_filename = (
-                f"{filename.replace('.csv', '')}_{file_index}.csv"
-                if len(csv_files) > 0
-                else filename
-            )
-            csv_files.append((csv_filename, "\n".join(current_file_data)))
+        # Finalize last file
+        finalize_current_file()
 
-        # Upload files
-        if len(csv_files) == 0:
+        if len(uploaded_files) == 0:
             raise ValueError("No data to export")
 
-        if len(csv_files) == 1:
-            # Single file - upload directly
-            object_name = self.upload_csv_file(csv_files[0][0], csv_files[0][1])
+        # If multiple files, create a ZIP with references
+        if len(uploaded_files) > 1:
+            # Download files, create ZIP, and upload
+            object_name = self._create_zip_from_uploaded_files(
+                uploaded_files, f"exports/{timestamp}_{filename.replace('.csv', '.zip')}"
+            )
         else:
-            # Multiple files - create ZIP
-            zip_filename = filename.replace(".csv", ".zip")
-            object_name = self.upload_csv_files_as_zip(csv_files, zip_filename)
+            object_name = uploaded_files[0]
 
-        return object_name, total_rows, len(csv_files)
+        return object_name, total_rows, len(uploaded_files)
+
+    def _create_zip_from_uploaded_files(
+        self,
+        object_names: list[str],
+        zip_object_name: str,
+    ) -> str:
+        """
+        Create a ZIP archive from already uploaded CSV files.
+
+        Args:
+            object_names: List of object names in MinIO
+            zip_object_name: Name for the ZIP archive
+
+        Returns:
+            The ZIP object name
+        """
+        client = self._initialize_client()
+        bucket_name = self._config.get("bucket_name", "superset-exports")
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(
+            zip_buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=6
+        ) as zip_file:
+            for object_name in object_names:
+                # Download file from MinIO
+                response = client.get_object(bucket_name, object_name)
+                file_data = response.read()
+                response.close()
+                response.release_conn()
+
+                # Add to ZIP with just the filename (no path)
+                filename = object_name.split("/")[-1]
+                zip_file.writestr(filename, file_data)
+
+                # Delete the individual CSV file
+                client.remove_object(bucket_name, object_name)
+
+        # Upload ZIP
+        self._upload_file_streaming(zip_buffer, zip_object_name)
+
+        logger.info(
+            "Created ZIP archive: %s (%d files)",
+            zip_object_name,
+            len(object_names),
+        )
+
+        return zip_object_name
 
 
 def is_minio_export_enabled() -> bool:

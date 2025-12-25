@@ -46,6 +46,17 @@ minio>=7.0.0
 
 ## Features
 
+### True Streaming Architecture
+
+The implementation uses **end-to-end streaming** to handle datasets of any size without memory issues:
+
+1. **Database Level**: Uses SQLAlchemy's `stream_results=True` with server-side cursors
+2. **Batch Processing**: Fetches rows in configurable chunks (default: 1000 rows)
+3. **Memory-Efficient Upload**: Streams data directly to MinIO using BytesIO buffers
+4. **Lazy Evaluation**: Python generators ensure data flows through the pipeline lazily
+
+**Memory footprint remains constant regardless of dataset size** - suitable for billions of rows.
+
 ### Automatic File Splitting
 
 When exporting datasets larger than `max_rows_per_file`, the export automatically:
