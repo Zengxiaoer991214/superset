@@ -21,12 +21,17 @@ import { ExportToCSVDropdown } from './index';
 
 const exportCSVOriginal = jest.fn();
 const exportCSVPivoted = jest.fn();
+const exportCSVOriginalMinio = jest.fn();
+const exportCSVPivotedMinio = jest.fn();
 
-const setup = () =>
+const setup = (minioEnabled = false) =>
   render(
     <ExportToCSVDropdown
       exportCSVOriginal={exportCSVOriginal}
       exportCSVPivoted={exportCSVPivoted}
+      exportCSVOriginalMinio={exportCSVOriginalMinio}
+      exportCSVPivotedMinio={exportCSVPivotedMinio}
+      minioEnabled={minioEnabled}
     >
       <div>.CSV</div>
     </ExportToCSVDropdown>,
@@ -59,4 +64,38 @@ test('Call export csv pivoted on click', () => {
   userEvent.click(screen.getByText('Pivoted'));
 
   expect(exportCSVPivoted).toHaveBeenCalled();
+});
+
+test('MinIO options not shown when disabled', () => {
+  setup(false);
+
+  userEvent.click(screen.getByText('.CSV'));
+  expect(screen.queryByText('Original (to MinIO)')).not.toBeInTheDocument();
+  expect(screen.queryByText('Pivoted (to MinIO)')).not.toBeInTheDocument();
+});
+
+test('MinIO options shown when enabled', () => {
+  setup(true);
+
+  userEvent.click(screen.getByText('.CSV'));
+  expect(screen.getByText('Original (to MinIO)')).toBeInTheDocument();
+  expect(screen.getByText('Pivoted (to MinIO)')).toBeInTheDocument();
+});
+
+test('Call export original to MinIO on click', () => {
+  setup(true);
+
+  userEvent.click(screen.getByText('.CSV'));
+  userEvent.click(screen.getByText('Original (to MinIO)'));
+
+  expect(exportCSVOriginalMinio).toHaveBeenCalled();
+});
+
+test('Call export pivoted to MinIO on click', () => {
+  setup(true);
+
+  userEvent.click(screen.getByText('.CSV'));
+  userEvent.click(screen.getByText('Pivoted (to MinIO)'));
+
+  expect(exportCSVPivotedMinio).toHaveBeenCalled();
 });

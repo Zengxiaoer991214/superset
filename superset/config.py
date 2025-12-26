@@ -1046,6 +1046,25 @@ CSV_EXPORT = {"encoding": "utf-8-sig"}
 # large datasets efficiently.
 CSV_STREAMING_ROW_THRESHOLD = 100000
 
+# MinIO Storage Configuration for CSV Export
+# When enabled, large CSV exports can be stored in MinIO and downloaded later
+MINIO_EXPORT_CONFIG = {
+    "enabled": False,  # Set to True to enable MinIO export
+    "endpoint": "localhost:9000",
+    "access_key": "",
+    "secret_key": "",
+    "bucket_name": "superset-exports",
+    "secure": False,  # Set to True for HTTPS
+    "region": None,
+    # Maximum rows per CSV file before splitting into multiple files
+    "max_rows_per_file": 1000000,
+    # File retention in seconds (default: 7 days)
+    "file_retention_seconds": 604800,
+}
+
+# Helper config for frontend - exposed via FRONTEND_CONF_KEYS
+MINIO_EXPORT_ENABLED = MINIO_EXPORT_CONFIG.get("enabled", False)
+
 # Excel Options: key/value pairs that will be passed as argument to DataFrame.to_excel
 # method.
 # note: index option should not be overridden
